@@ -54,6 +54,7 @@ abstract contract CToken is
 
         // Initialize block number and borrow index (block number mocks depend on comptroller being set)
         accrualBlockNumber = getBlockNumber();
+        accrualBlockTimestamp = getBlockTimestamp();
         borrowIndex = mantissaOne;
 
         // Set the interest rate model (depends on block number / borrow index)
@@ -235,8 +236,14 @@ abstract contract CToken is
      * @dev Function to simply retrieve block number
      *  This exists mainly for inheriting test contracts to stub this result.
      * @dev Switched to timestamp for use with zkSync network
+     * @dev switch back to block number for use with other networks
      */
     function getBlockNumber() internal view virtual returns (uint) {
+        return block.number;
+    }
+
+    //This function return the current block timestamp which make sense
+    function getBlockTimestamp() internal view returns (uint) {
         return block.timestamp;
     }
 
@@ -394,6 +401,10 @@ abstract contract CToken is
         uint currentBlockNumber = getBlockNumber();
         uint accrualBlockNumberPrior = accrualBlockNumber;
 
+        /* Remember the initial timestamp */
+        uint currentBlockTimestamp = getBlockTimestamp();
+        uint accrualTimestampPrior = accrualBlockTimestamp; // maybe rename this variable to accrualTime
+
         /* Short-circuit accumulating 0 interest */
         if (accrualBlockNumberPrior == currentBlockNumber) {
             return NO_ERROR;
@@ -411,27 +422,35 @@ abstract contract CToken is
             borrowsPrior,
             reservesPrior
         );
-        require(
-            borrowRateMantissa <= borrowRateMaxMantissa,
-            "borrow rate is absurdly high"
-        );
 
         /* Calculate the number of blocks elapsed since the last accrual */
         uint blockDelta = currentBlockNumber - accrualBlockNumberPrior;
+        uint timeDelta = currentBlockTimestamp - accrualBlockTimestampPrior;
+
+        require(timeDelta > 0, "Time delta must be positive");
+        require(timeDelta < 365 days, "Time delta too large"); // Prevent extreme values
 
         /*
          * Calculate the interest accumulated into borrows and reserves and the new index:
-         *  simpleInterestFactor = borrowRate * blockDelta
+         *  simpleInterestFactor = borrowRate * blockDelta / timeDelta
+         *  This normalizes the per-block rate to per-second rate
          *  interestAccumulated = simpleInterestFactor * totalBorrows
          *  totalBorrowsNew = interestAccumulated + totalBorrows
          *  totalReservesNew = interestAccumulated * reserveFactor + totalReserves
          *  borrowIndexNew = simpleInterestFactor * borrowIndex + borrowIndex
          */
 
-        Exp memory simpleInterestFactor = mul_(
-            Exp({mantissa: borrowRateMantissa}),
-            blockDelta
+        Exp memory simpleInterestFactor = div_(
+            mul_(Exp({mantissa: borrowRateMantissa}), blockDelta),
+            timeDelta
         );
+
+        // Check the normalized per-second rate against the limit
+        require(
+            simpleInterestFactor.mantissa <= borrowRateMaxMantissa,
+            "borrow rate is absurdly high"
+        );
+
         uint interestAccumulated = mul_ScalarTruncate(
             simpleInterestFactor,
             borrowsPrior
@@ -498,7 +517,7 @@ abstract contract CToken is
         }
 
         /* Verify market's block number equals current block number */
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert MintFreshnessCheck();
         }
 
@@ -617,7 +636,7 @@ abstract contract CToken is
         }
 
         /* Verify market's block number equals current block number */
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert RedeemFreshnessCheck();
         }
 
@@ -684,7 +703,7 @@ abstract contract CToken is
         }
 
         /* Verify market's block number equals current block number */
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert BorrowFreshnessCheck();
         }
 
@@ -774,7 +793,7 @@ abstract contract CToken is
         }
 
         /* Verify market's block number equals current block number */
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert RepayBorrowFreshnessCheck();
         }
 
@@ -880,12 +899,12 @@ abstract contract CToken is
         }
 
         /* Verify market's block number equals current block number */
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert LiquidateFreshnessCheck();
         }
 
         /* Verify cTokenCollateral market's block number equals current block number */
-        if (cTokenCollateral.accrualBlockNumber() != getBlockNumber()) {
+        if (cTokenCollateral.accrualBlockNumber() != getCurrentTimestamp()) {
             revert LiquidateCollateralFreshnessCheck();
         }
 
@@ -1152,7 +1171,7 @@ abstract contract CToken is
         }
 
         // Verify market's block number equals current block number
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert SetReserveFactorFreshCheck();
         }
 
@@ -1199,7 +1218,7 @@ abstract contract CToken is
         uint actualAddAmount;
 
         // We fail gracefully unless market's block number equals current block number
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert AddReservesFactorFreshCheck(actualAddAmount);
         }
 
@@ -1258,7 +1277,7 @@ abstract contract CToken is
         }
 
         // We fail gracefully unless market's block number equals current block number
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert ReduceReservesFreshCheck();
         }
 
@@ -1321,7 +1340,7 @@ abstract contract CToken is
         }
 
         // We fail gracefully unless market's block number equals current block number
-        if (accrualBlockNumber != getBlockNumber()) {
+        if (accrualBlockNumber != getCurrentTimestamp()) {
             revert SetInterestRateModelFreshCheck();
         }
 
